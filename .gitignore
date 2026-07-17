@@ -1,0 +1,26 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+.venv/
+venv/
+
+# Testing and linting
+.pytest_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+test-results.xml
+
+# Environment variables
+.env
+.env.*
+
+# Editors
+.vscode/
+.idea/
+
+# Operating system
+.DS_Store
