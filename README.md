@@ -88,3 +88,34 @@ Check Docker health:
       --misconfig-scanners dockerfile \
       --severity HIGH,CRITICAL \
       .
+
+## CI Security Pipeline
+
+GitHub Actions automatically validates every push and pull request to `main`.
+
+The pipeline performs:
+
+- Ruff linting
+- Pytest unit tests
+- Repository secret scanning
+- Dockerfile misconfiguration scanning
+- Secure container image build
+- Non-root runtime validation
+- Liveness and readiness checks
+- HIGH and CRITICAL vulnerability scanning
+- Container image secret scanning
+
+The container-security job runs only after the quality and source-security jobs
+have passed.
+
+### Workflow
+
+    .github/workflows/ci.yml
+
+### View recent workflow runs
+
+    gh run list --workflow ci.yml
+
+### View a specific workflow run
+
+    gh run view <run-id>
