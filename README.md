@@ -42,3 +42,49 @@ Expected behavior:
 
 - `/health` returns HTTP `500`
 - `/ready` returns HTTP `200`
+
+## Secure Container Image
+
+The application is packaged using a multi-stage Docker build and runs as a
+non-root user with UID and GID `10001`.
+
+### Build
+
+    docker build --pull --tag secure-gitops-app:local .
+
+### Run
+
+    docker run \
+      --detach \
+      --name secure-gitops-app \
+      --publish 8000:8000 \
+      secure-gitops-app:local
+
+### Verify container security
+
+    docker exec secure-gitops-app id
+
+Expected runtime identity:
+
+    uid=10001(appuser) gid=10001(appgroup)
+
+Check Docker health:
+
+    docker inspect \
+      --format 'Health status: {{.State.Health.Status}}' \
+      secure-gitops-app
+
+### Security scanning
+
+    trivy image \
+      --scanners vuln \
+      --severity HIGH,CRITICAL \
+      --ignore-unfixed \
+      secure-gitops-app:local
+
+    trivy fs --scanners secret .
+
+    trivy config \
+      --misconfig-scanners dockerfile \
+      --severity HIGH,CRITICAL \
+      .
