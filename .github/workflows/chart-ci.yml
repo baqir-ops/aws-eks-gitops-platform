@@ -1,0 +1,271 @@
+name: Helm Chart CI and Release
+
+on:
+  pull_request:
+    paths:
+      - "charts/**"
+      - "examples/**"
+      - ".github/workflows/chart-ci.yml"
+
+  push:
+    branches:
+      - main
+    tags:
+      - "task-api-v*"
+    paths:
+      - "charts/**"
+      - "examples/**"
+      - ".github/workflows/chart-ci.yml"
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: helm-chart-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Validate and Scan Helm Chart
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.0
+
+      - name: Install Trivy
+        uses: aquasecurity/setup-trivy@81e514348e19b6112ce2a7e3ecbafe19c1e1f567 # v0.3.1
+        with:
+          version: v0.72.0
+          cache: true
+
+      - name: Display tool versions
+        run: |
+          helm version --short
+          trivy --version
+
+      - name: Lint chart
+        run: helm lint charts/task-api --strict
+
+      - name: Render all environments
+        run: |
+          mkdir -p rendered
+
+          for environment in dev staging production; do
+            echo "Rendering ${environment}"
+
+            helm template task-api charts/task-api \
+              --namespace "${environment}" \
+              --kube-version 1.35.0 \
+              --values "examples/values-${environment}.yaml" \
+              > "rendered/${environment}.yaml"
+
+            test -s "rendered/${environment}.yaml"
+          done
+
+      - name: Verify rendered security controls
+        run: |
+          DEV_MANIFEST="rendered/dev.yaml"
+
+          grep -q "runAsNonRoot: true" "$DEV_MANIFEST"
+          grep -q "runAsUser: 10001" "$DEV_MANIFEST"
+          grep -q "runAsGroup: 10001" "$DEV_MANIFEST"
+          grep -q "allowPrivilegeEscalation: false" "$DEV_MANIFEST"
+          grep -q "privileged: false" "$DEV_MANIFEST"
+          grep -q "readOnlyRootFilesystem: true" "$DEV_MANIFEST"
+          grep -q "automountServiceAccountToken: false" "$DEV_MANIFEST"
+          grep -q "type: RuntimeDefault" "$DEV_MANIFEST"
+          grep -q "mountPath: /tmp" "$DEV_MANIFEST"
+          grep -q "sizeLimit: 64Mi" "$DEV_MANIFEST"
+
+          echo "PASS: Required security controls are rendered"
+
+      - name: Verify probes and resource controls
+        run: |
+          DEV_MANIFEST="rendered/dev.yaml"
+
+          grep -q "livenessProbe:" "$DEV_MANIFEST"
+          grep -q "path: /health" "$DEV_MANIFEST"
+          grep -q "readinessProbe:" "$DEV_MANIFEST"
+          grep -q "path: /ready" "$DEV_MANIFEST"
+          grep -q "requests:" "$DEV_MANIFEST"
+          grep -q "limits:" "$DEV_MANIFEST"
+
+          echo "PASS: Probes and resources are rendered"
+
+      - name: Verify environment-specific resources
+        run: |
+          if grep -q "kind: HorizontalPodAutoscaler" rendered/dev.yaml; then
+            echo "FAIL: HPA must be disabled in development"
+            exit 1
+          fi
+
+          if grep -q "kind: ServiceMonitor" rendered/dev.yaml; then
+            echo "FAIL: ServiceMonitor must be disabled in development"
+            exit 1
+          fi
+
+          grep -q "kind: ServiceMonitor" rendered/staging.yaml
+          grep -q "kind: ServiceMonitor" rendered/production.yaml
+          grep -q "kind: HorizontalPodAutoscaler" rendered/production.yaml
+          grep -q "minReplicas: 2" rendered/production.yaml
+          grep -q "maxReplicas: 5" rendered/production.yaml
+
+          echo "PASS: Environment-specific resources are correct"
+
+      - name: Verify Helm test
+        run: |
+          helm template task-api charts/task-api \
+            --namespace dev \
+            --values examples/values-dev.yaml \
+            --show-only templates/tests/test-connection.yaml \
+            > rendered/helm-test.yaml
+
+          grep -q "helm.sh/hook: test" rendered/helm-test.yaml
+          grep -q "/health" rendered/helm-test.yaml
+
+          echo "PASS: Helm test renders correctly"
+
+      - name: Scan rendered manifests
+        run: |
+          for environment in dev staging production; do
+            echo "Scanning ${environment}"
+
+            trivy config \
+              --quiet \
+              --severity HIGH,CRITICAL \
+              --exit-code 1 \
+              "rendered/${environment}.yaml"
+          done
+
+          echo "PASS: No HIGH or CRITICAL misconfigurations"
+
+      - name: Package chart verification
+        run: |
+          mkdir -p package-test
+
+          helm package charts/task-api \
+            --destination package-test
+
+          PACKAGE_PATH="$(
+            find package-test \
+              -maxdepth 1 \
+              -type f \
+              -name "task-api-*.tgz" \
+              -print \
+              -quit
+          )"
+
+          test -n "$PACKAGE_PATH"
+          helm show chart "$PACKAGE_PATH"
+
+  build-pages:
+    name: Package Helm Repository
+    if: startsWith(github.ref, 'refs/tags/task-api-v')
+    needs:
+      - validate
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Install Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+        with:
+          version: v3.21.0
+
+      - name: Verify release tag matches chart version
+        shell: bash
+        run: |
+          TAG_VERSION="${GITHUB_REF_NAME#task-api-v}"
+          CHART_VERSION="$(
+            helm show chart charts/task-api |
+            awk '$1 == "version:" {print $2}'
+          )"
+
+          echo "Git tag version: ${TAG_VERSION}"
+          echo "Chart version:   ${CHART_VERSION}"
+
+          if [ "$TAG_VERSION" != "$CHART_VERSION" ]; then
+            echo "FAIL: Tag and Chart.yaml versions do not match"
+            exit 1
+          fi
+
+          echo "PASS: Tag matches chart version"
+
+      - name: Build Helm repository
+        run: |
+          mkdir -p public
+
+          helm package charts/task-api \
+            --destination public
+
+          helm repo index public \
+            --url "https://baqir-ops.github.io/secure-gitops-helm-chart"
+
+          cat > public/index.html <<'HTML'
+          <!doctype html>
+          <html lang="en">
+          <head>
+            <meta charset="utf-8">
+            <meta name="viewport" content="width=device-width, initial-scale=1">
+            <title>Secure GitOps Helm Repository</title>
+          </head>
+          <body>
+            <h1>Secure GitOps Helm Repository</h1>
+            <p>Published Task API Helm charts.</p>
+            <pre>helm repo add secure-gitops https://baqir-ops.github.io/secure-gitops-helm-chart</pre>
+            <pre>helm repo update</pre>
+            <pre>helm search repo secure-gitops/task-api --versions</pre>
+          </body>
+          </html>
+          HTML
+
+          test -f public/index.yaml
+          test -f public/task-api-*.tgz
+
+          echo "=== PUBLISHED FILES ==="
+          find public -maxdepth 1 -type f -printf "%f\n" | sort
+
+      - name: Upload GitHub Pages artifact
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: public
+          retention-days: 1
+
+  deploy-pages:
+    name: Deploy Helm Repository to Pages
+    if: startsWith(github.ref, 'refs/tags/task-api-v')
+    needs:
+      - build-pages
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    permissions:
+      pages: write
+      id-token: write
+
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - name: Deploy GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@cd2ce8fcbc39b97be8ca5fce6e763baed58fa128 # v5.0.0
