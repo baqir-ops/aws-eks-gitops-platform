@@ -1,0 +1,23 @@
+replicaCount: 2
+
+image:
+  repository: example.invalid/secure-gitops-app
+  tag: "sha-production-example"
+
+config:
+  environment: production
+  forceFailure: "false"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: monitoring
+
+ingress:
+  enabled: false

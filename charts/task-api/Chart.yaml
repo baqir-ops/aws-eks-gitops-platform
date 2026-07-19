@@ -1,0 +1,29 @@
+apiVersion: v2
+name: task-api
+description: Secure GitOps Task API Helm chart
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+kubeVersion: ">=1.30.0-0"
+
+keywords:
+  - fastapi
+  - gitops
+  - kubernetes
+  - security
+  - observability
+
+home: https://github.com/baqir-ops/secure-gitops-helm-chart
+
+sources:
+  - https://github.com/baqir-ops/secure-gitops-app
+  - https://github.com/baqir-ops/secure-gitops-helm-chart
+
+maintainers:
+  - name: Muhammad Baqir Nawaz
+
+annotations:
+  artifacthub.io/changes: |
+    - Initial secure Task API Helm chart
+    - Added non-root security contexts
+    - Added health probes, HPA and ServiceMonitor support

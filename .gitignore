@@ -1,0 +1,5 @@
+*.tgz
+rendered*.yaml
+public/
+charts/*/charts/
+charts/*/Chart.lock
