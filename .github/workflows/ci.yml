@@ -249,3 +249,144 @@ jobs:
             echo "- HIGH/CRITICAL vulnerability gate passed"
             echo "- Image secret scan passed"
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-ecr:
+    name: Publish Immutable Image to ECR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs:
+      - container-security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+
+    permissions:
+      contents: read
+      id-token: write
+
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      IMAGE_TAG: sha-${{ github.sha }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Configure temporary AWS credentials through OIDC
+        uses: aws-actions/configure-aws-credentials@517a711dbcd0e402f90c77e7e2f81e849156e31d # v6.2.2
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}
+          allowed-account-ids: ${{ env.AWS_ACCOUNT_ID }}
+          mask-aws-account-id: true
+          unset-current-credentials: true
+
+      - name: Verify assumed AWS identity
+        run: |
+          set -euo pipefail
+
+          aws sts get-caller-identity \
+            --query 'Arn' \
+            --output text
+
+      - name: Log in to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@d539f0932e70871a027e9d5a9d8fc38589180a64 # v2.1.6
+        with:
+          mask-password: true
+
+      - name: Calculate immutable image reference
+        id: image-metadata
+        env:
+          REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+        run: |
+          set -euo pipefail
+
+          image_uri="${REGISTRY}/${ECR_REPOSITORY}:${IMAGE_TAG}"
+
+          echo "image_uri=${image_uri}" >> "$GITHUB_OUTPUT"
+          echo "Image reference: ${image_uri}"
+
+      - name: Check whether immutable tag already exists
+        id: existing-image
+        run: |
+          set -euo pipefail
+
+          if aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            >/dev/null 2>&1
+          then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+            echo "Image tag already exists; publication will be skipped."
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+            echo "Image tag does not exist and will be published."
+          fi
+
+      - name: Build publication image
+        if: steps.existing-image.outputs.exists == 'false'
+        env:
+          IMAGE_URI: ${{ steps.image-metadata.outputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          docker build \
+            --pull \
+            --tag "$IMAGE_URI" \
+            .
+
+      - name: Scan publication image
+        if: steps.existing-image.outputs.exists == 'false'
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: "v0.72.0"
+          scan-type: image
+          image-ref: ${{ steps.image-metadata.outputs.image_uri }}
+          scanners: vuln,secret
+          format: table
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"
+          hide-progress: true
+
+      - name: Push immutable image
+        if: steps.existing-image.outputs.exists == 'false'
+        env:
+          IMAGE_URI: ${{ steps.image-metadata.outputs.image_uri }}
+        run: |
+          set -euo pipefail
+
+          docker push "$IMAGE_URI"
+
+      - name: Verify image in Amazon ECR
+        run: |
+          set -euo pipefail
+
+          aws ecr describe-images \
+            --repository-name "$ECR_REPOSITORY" \
+            --region "$AWS_REGION" \
+            --image-ids imageTag="$IMAGE_TAG" \
+            --query 'imageDetails[0].{
+              Tag:imageTags[0],
+              Digest:imageDigest,
+              SizeBytes:imageSizeInBytes,
+              PushedAt:imagePushedAt
+            }' \
+            --output table
+
+      - name: Write ECR publication summary
+        run: |
+          {
+            echo "## Immutable ECR Image"
+            echo
+            echo "- Repository: \`${ECR_REPOSITORY}\`"
+            echo "- Tag: \`${IMAGE_TAG}\`"
+            echo "- Authentication: GitHub OIDC"
+            echo "- Static AWS keys: none"
+            echo "- Security jobs completed before publication"
+          } >> "$GITHUB_STEP_SUMMARY"
