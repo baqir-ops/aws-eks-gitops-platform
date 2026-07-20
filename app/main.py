@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 app = FastAPI(
     title="Secure GitOps Task API",
     description="Sample API deployed through the Secure GitOps Platform",
-    version="1.0.0",
+    version="1.1.0",
 )
 
 HTTP_REQUESTS = Counter(
@@ -62,7 +62,7 @@ def root() -> dict[str, str]:
     return {
         "service": "secure-gitops-task-api",
         "status": "running",
-        "version": "1.0.0",
+        "version": "1.1.0",
     }
 
 

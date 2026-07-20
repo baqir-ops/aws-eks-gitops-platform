@@ -21,7 +21,7 @@ def test_root() -> None:
     assert response.json() == {
         "service": "secure-gitops-task-api",
         "status": "running",
-        "version": "1.0.0",
+        "version": "1.1.0",
     }
 
 
