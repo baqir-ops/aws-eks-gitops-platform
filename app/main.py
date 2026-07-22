@@ -1,4 +1,5 @@
 import os
+import time
 from typing import Any
 
 from fastapi import FastAPI, HTTPException, Request, Response, status
@@ -41,20 +42,30 @@ class TaskCreate(BaseModel):
 
 @app.middleware("http")
 async def record_request_metrics(request: Request, call_next):
-    """Record request count and latency for Prometheus."""
+    """Record low-cardinality request metrics for Prometheus."""
 
-    path = request.url.path
+    started_at = time.perf_counter()
+    status_code = "500"
 
-    with HTTP_LATENCY.labels(path=path).time():
+    try:
         response = await call_next(request)
+        status_code = str(response.status_code)
+        return response
+    finally:
+        route = request.scope.get("route")
+        route_path = getattr(route, "path", "unmatched")
 
-    HTTP_REQUESTS.labels(
-        method=request.method,
-        path=path,
-        status=str(response.status_code),
-    ).inc()
+        # Prometheus scrapes should not distort application traffic metrics.
+        if route_path != "/metrics":
+            HTTP_LATENCY.labels(path=route_path).observe(
+                time.perf_counter() - started_at
+            )
 
-    return response
+            HTTP_REQUESTS.labels(
+                method=request.method,
+                path=route_path,
+                status=status_code,
+            ).inc()
 
 
 @app.get("/")

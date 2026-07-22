@@ -89,3 +89,14 @@ def test_prometheus_metrics() -> None:
     assert response.status_code == 200
     assert "app_http_requests_total" in response.text
     assert "app_http_request_duration_seconds" in response.text
+
+
+
+def test_prometheus_uses_low_cardinality_paths() -> None:
+    client.get("/does-not-exist/12345")
+    response = client.get("/metrics")
+
+    assert response.status_code == 200
+    assert 'path="unmatched"' in response.text
+    assert 'path="/does-not-exist/12345"' not in response.text
+    assert 'path="/metrics"' not in response.text
