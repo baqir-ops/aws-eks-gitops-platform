@@ -1,0 +1,79 @@
+name: Terraform Validation
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  pull-requests: read
+
+jobs:
+  changes:
+    name: Detect Terraform Changes
+    runs-on: ubuntu-latest
+    outputs:
+      tf_changed: ${{ steps.filter.outputs.tf }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            tf:
+              - '**/.terraform.lock.hcl'
+              - '**/*.tf'
+              - '**/*.tfvars.example'
+              - '.github/workflows/terraform-validation.yml'
+
+  terraform:
+    name: Terraform (${{ matrix.directory }})
+    needs: changes
+    if: needs.changes.outputs.tf_changed == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        directory:
+          - bootstrap
+          - environments/github-oidc-ecr
+          - environments/lab
+    defaults:
+      run:
+        working-directory: ${{ matrix.directory }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_wrapper: false
+      - name: Terraform Format Check
+        run: terraform fmt -check -recursive
+      - name: Terraform Init
+        run: terraform init -backend=false
+      - name: Terraform Validate
+        run: terraform validate
+
+  # This is the ONLY job that should be set as "Required" in branch
+  # protection. Its name never changes regardless of the matrix above,
+  # and it always runs — passing automatically when no .tf files changed,
+  # and reflecting the real result when they did.
+  terraform-checks:
+    name: Terraform Checks
+    needs: [changes, terraform]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Report result
+        run: |
+          if [ "${{ needs.changes.outputs.tf_changed }}" != "true" ]; then
+            echo "No Terraform files changed in this PR — skipping validation."
+            exit 0
+          fi
+          if [ "${{ needs.terraform.result }}" != "success" ]; then
+            echo "Terraform validation failed."
+            exit 1
+          fi
+          echo "Terraform validation passed."
