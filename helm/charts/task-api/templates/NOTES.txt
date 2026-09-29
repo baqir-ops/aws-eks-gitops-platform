@@ -1,0 +1,11 @@
+1. Port-forward the service:
+
+   kubectl port-forward service/{{ include "task-api.fullname" . }} 8000:{{ .Values.service.port }}
+
+2. Test the health endpoint:
+
+   curl http://127.0.0.1:8000/health
+
+3. Run the Helm test:
+
+   helm test {{ .Release.Name }}

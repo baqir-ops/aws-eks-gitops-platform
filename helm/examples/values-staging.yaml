@@ -1,0 +1,20 @@
+replicaCount: 2
+
+image:
+  repository: example.invalid/secure-gitops-app
+  tag: "sha-staging-example"
+
+config:
+  environment: staging
+  forceFailure: "false"
+
+autoscaling:
+  enabled: false
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: monitoring
+
+ingress:
+  enabled: false

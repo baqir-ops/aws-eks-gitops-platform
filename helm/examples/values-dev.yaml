@@ -1,0 +1,18 @@
+replicaCount: 1
+
+image:
+  repository: example.invalid/secure-gitops-app
+  tag: "sha-dev-example"
+
+config:
+  environment: dev
+  forceFailure: "false"
+
+autoscaling:
+  enabled: false
+
+serviceMonitor:
+  enabled: false
+
+ingress:
+  enabled: false
