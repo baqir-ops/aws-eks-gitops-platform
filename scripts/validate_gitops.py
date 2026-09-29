@@ -189,7 +189,7 @@ if len(repositories) > 1:
 
 for path in sorted(Path(".").rglob("*.yaml")):
     if any(
-        part in {".git", ".venv", "docs"}
+        part in {".git", ".venv", "docs", "helm", "charts"}
         for part in path.parts
     ):
         continue
