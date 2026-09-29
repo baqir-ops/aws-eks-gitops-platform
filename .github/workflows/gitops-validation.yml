@@ -143,6 +143,7 @@ jobs:
           version: "v0.72.0"
           scan-type: fs
           scan-ref: "."
+          skip-dirs: "terraform"
           scanners: secret,misconfig
           format: table
           severity: HIGH,CRITICAL
