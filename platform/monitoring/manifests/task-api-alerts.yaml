@@ -4,7 +4,7 @@ metadata:
   name: task-api-alerts
   namespace: monitoring
   labels:
-    app.kubernetes.io/part-of: secure-gitops-platform
+    app.kubernetes.io/part-of: aws-eks-gitops-platform
     release: monitoring
 spec:
   groups:

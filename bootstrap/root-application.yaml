@@ -1,13 +1,13 @@
 apiVersion: argoproj.io/v1alpha1
 kind: Application
 metadata:
-  name: secure-gitops-root
+  name: aws-eks-gitops-root
   namespace: argocd
 spec:
   project: default
 
   source:
-    repoURL: https://github.com/baqir-ops/secure-gitops-platform.git
+    repoURL: https://github.com/baqir-ops/aws-eks-gitops-platform.git
     targetRevision: main
     path: argocd
     directory:

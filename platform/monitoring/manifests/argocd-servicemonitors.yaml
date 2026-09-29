@@ -5,7 +5,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/name: argocd-application-controller
-    app.kubernetes.io/part-of: secure-gitops-platform
+    app.kubernetes.io/part-of: aws-eks-gitops-platform
 spec:
   namespaceSelector:
     matchNames:
@@ -29,7 +29,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/name: argocd-applicationset-controller
-    app.kubernetes.io/part-of: secure-gitops-platform
+    app.kubernetes.io/part-of: aws-eks-gitops-platform
 spec:
   namespaceSelector:
     matchNames:
@@ -53,7 +53,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/name: argocd-repo-server
-    app.kubernetes.io/part-of: secure-gitops-platform
+    app.kubernetes.io/part-of: aws-eks-gitops-platform
 spec:
   namespaceSelector:
     matchNames:
@@ -77,7 +77,7 @@ metadata:
   namespace: argocd
   labels:
     app.kubernetes.io/name: argocd-server
-    app.kubernetes.io/part-of: secure-gitops-platform
+    app.kubernetes.io/part-of: aws-eks-gitops-platform
 spec:
   namespaceSelector:
     matchNames:
