@@ -1,1 +1,166 @@
-<paste the full code block above here>
+name: GitOps Validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gitops-validation-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  HELM_CHART_VERSION: "0.1.0"
+  MONITORING_CHART_VERSION: "87.19.0"
+  ARGO_CD_CHART_VERSION: "10.1.4"
+
+jobs:
+  validate:
+    name: Validate GitOps Desired State
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements-validation.txt
+
+      - name: Install validation dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements-validation.txt
+
+      - name: Validate desired-state files
+        run: python scripts/validate_gitops.py
+
+      - name: Verify Helm availability
+        run: helm version --short
+
+      - name: Render every environment with the local chart
+        run: |
+          set -euo pipefail
+
+          for environment in dev staging production; do
+            echo "Rendering ${environment}..."
+
+            helm template task-api \
+              ./helm \
+              --namespace "$environment" \
+              --values "environments/${environment}/values.yaml" \
+              > "/tmp/task-api-${environment}.yaml"
+
+            test -s "/tmp/task-api-${environment}.yaml"
+          done
+
+      - name: Validate task API metrics contracts
+        run: |
+          set -euo pipefail
+
+          python scripts/validate_task_api_metrics.py \
+            --dev /tmp/task-api-dev.yaml \
+            --staging /tmp/task-api-staging.yaml \
+            --production /tmp/task-api-production.yaml
+
+      - name: Validate Argo CD metrics contracts
+        run: |
+          set -euo pipefail
+
+          helm repo add argo https://argoproj.github.io/argo-helm --force-update
+          helm repo update argo
+
+          helm template argocd argo/argo-cd \
+            --version "$ARGO_CD_CHART_VERSION" \
+            --namespace argocd \
+            --values bootstrap/argocd-values.yaml \
+            > /tmp/argocd-metrics-services.yaml
+
+          test -s /tmp/argocd-metrics-services.yaml
+
+          python scripts/validate_argocd_metrics.py \
+            --services /tmp/argocd-metrics-services.yaml \
+            --monitors platform/monitoring/manifests/argocd-servicemonitors.yaml
+
+      - name: Render pinned monitoring stack
+        run: |
+          set -euo pipefail
+
+          helm repo add prometheus-community \
+            https://prometheus-community.github.io/helm-charts \
+            --force-update
+
+          helm repo update prometheus-community
+
+          helm template monitoring \
+            prometheus-community/kube-prometheus-stack \
+            --version "$MONITORING_CHART_VERSION" \
+            --namespace monitoring \
+            --include-crds \
+            --values platform/monitoring/values.yaml \
+            > /tmp/monitoring-rendered.yaml
+
+          test -s /tmp/monitoring-rendered.yaml
+
+          for kind in \
+            CustomResourceDefinition \
+            Prometheus \
+            Alertmanager \
+            PrometheusRule \
+            ServiceMonitor
+          do
+            if ! grep -q "^kind: ${kind}$" /tmp/monitoring-rendered.yaml; then
+              echo "FAIL: Monitoring render is missing ${kind}"
+              exit 1
+            fi
+
+            echo "PASS: ${kind}"
+          done
+
+          if grep -RInE 'targetRevision:[[:space:]]*["'\'']?\*' bootstrap platform; then
+            echo "FAIL: Wildcard targetRevision is prohibited"
+            exit 1
+          fi
+
+          echo "Monitoring chart ${MONITORING_CHART_VERSION} rendered successfully."
+
+      - name: Scan GitOps repository
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: "v0.72.0"
+          scan-type: fs
+          scan-ref: "."
+          scanners: secret,misconfig
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          hide-progress: true
+
+      - name: Write validation summary
+        run: |
+          {
+            echo "## GitOps Validation Passed"
+            echo
+            echo "- YAML and environment structure validated"
+            echo "- Immutable SHA image tags validated"
+            echo "- Plain Kubernetes Secrets prohibited"
+            echo "- Dev, staging, and production rendered with Helm"
+            echo "- Dev ServiceMonitor intentionally disabled until monitoring stack is installed"
+            echo "- Staging ServiceMonitor disabled"
+            echo "- Production ServiceMonitor disabled"
+            echo "- Argo CD metrics ServiceMonitor contracts validated"
+            echo "- Pinned kube-prometheus-stack chart rendered"
+            echo "- Monitoring CRDs and custom resources validated"
+            echo "- Trivy secret and misconfiguration gates passed"
+          } >> "$GITHUB_STEP_SUMMARY"
