@@ -1,0 +1,27 @@
+# Argo CD lab configuration.
+#
+# ClusterIP services prevent AWS from creating public load balancers.
+# Metrics Services are enabled here, while ServiceMonitor resources are
+# managed separately by the GitOps monitoring Application.
+
+controller:
+  metrics:
+    enabled: true
+
+server:
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: false
+
+  metrics:
+    enabled: true
+
+repoServer:
+  metrics:
+    enabled: true
+
+applicationSet:
+  metrics:
+    enabled: true

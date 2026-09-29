@@ -1,0 +1,26 @@
+replicaCount: 1
+
+image:
+  repository: 950165721116.dkr.ecr.ap-south-1.amazonaws.com/secure-gitops-app
+  tag: "sha-5753435313398b61de52587c345e8d9e42ee046f"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+config:
+  environment: dev
+  forceFailure: "false"
+
+autoscaling:
+  enabled: false
+  minReplicas: 1
+  maxReplicas: 3
+  targetCPUUtilizationPercentage: 70
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: monitoring
+
+ingress:
+  # Kept disabled to avoid creating an AWS load balancer during initial testing.
+  enabled: false

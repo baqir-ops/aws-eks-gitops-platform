@@ -1,0 +1,25 @@
+replicaCount: 2
+
+image:
+  repository: 950165721116.dkr.ecr.ap-south-1.amazonaws.com/secure-gitops-app
+  tag: "sha-8b9c855fb43cf92be8bfafc201b4acd05e1ee2d8"
+  digest: ""
+  pullPolicy: IfNotPresent
+
+config:
+  environment: production
+  forceFailure: "false"
+
+autoscaling:
+  enabled: true
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+serviceMonitor:
+  enabled: true
+  labels:
+    release: monitoring
+
+ingress:
+  enabled: false

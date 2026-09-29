@@ -1,0 +1,30 @@
+apiVersion: monitoring.coreos.com/v1
+kind: PrometheusRule
+metadata:
+  name: task-api-alerts
+  namespace: monitoring
+  labels:
+    app.kubernetes.io/part-of: secure-gitops-platform
+    release: monitoring
+spec:
+  groups:
+    - name: task-api.rules
+      rules:
+        - alert: TaskAPIHighHTTP5xxRate
+          expr: |
+            (
+              sum by (namespace) (
+                rate(app_http_requests_total{status=~"5.."}[5m])
+              )
+              /
+              sum by (namespace) (
+                rate(app_http_requests_total[5m])
+              )
+            ) > 0.05
+          for: 5m
+          labels:
+            severity: warning
+            service: task-api
+          annotations:
+            summary: "High HTTP 5xx error rate in {{ $labels.namespace }}"
+            description: "Task API in namespace {{ $labels.namespace }} has had more than 5% HTTP 5xx responses for 5 minutes."

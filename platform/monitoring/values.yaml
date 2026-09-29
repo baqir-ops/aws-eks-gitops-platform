@@ -1,0 +1,141 @@
+# Cost-conscious observability configuration for the EKS lab.
+#
+# This file contains no passwords or access tokens. Grafana reads its
+# administrator credentials from a Kubernetes Secret created separately.
+
+crds:
+  enabled: true
+
+defaultRules:
+  create: true
+
+# Amazon EKS does not expose these managed control-plane endpoints in the
+# same way as a self-managed Kubernetes control plane.
+kubeControllerManager:
+  enabled: false
+
+kubeEtcd:
+  enabled: false
+
+kubeScheduler:
+  enabled: false
+
+# Avoid an unreliable kube-proxy scrape target in the initial EKS lab.
+kubeProxy:
+  enabled: false
+
+grafana:
+  enabled: true
+
+  adminUser: admin
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: false
+
+  persistence:
+    enabled: false
+
+  serviceMonitor:
+    enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+alertmanager:
+  enabled: true
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: false
+
+  alertmanagerSpec:
+    replicas: 1
+    retention: 24h
+
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+prometheusOperator:
+  enabled: true
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+prometheus:
+  enabled: true
+
+  service:
+    type: ClusterIP
+
+  ingress:
+    enabled: false
+
+  prometheusSpec:
+    replicas: 1
+
+    retention: 3d
+    retentionSize: 4GB
+
+    scrapeInterval: 30s
+    evaluationInterval: 30s
+
+    walCompression: true
+    enableAdminAPI: false
+
+    # Discover ServiceMonitors and PodMonitors across all namespaces without
+    # requiring the kube-prometheus-stack Helm release label.
+    serviceMonitorSelectorNilUsesHelmValues: false
+    serviceMonitorNamespaceSelector: {}
+
+    podMonitorSelectorNilUsesHelmValues: false
+    podMonitorNamespaceSelector: {}
+
+    resources:
+      requests:
+        cpu: 300m
+        memory: 1Gi
+      limits:
+        cpu: "1"
+        memory: 2Gi
+
+    # Ephemeral storage is deliberate for this short-lived lab. A production
+    # installation would normally use an encrypted gp3 persistent volume.
+    storageSpec: {}
+
+kube-state-metrics:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 200m
+      memory: 256Mi
+
+prometheus-node-exporter:
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
