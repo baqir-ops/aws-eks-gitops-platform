@@ -1,0 +1,231 @@
+name: Promote Dev Image
+
+on:
+  workflow_run:
+    workflows:
+      - CI Security Pipeline
+    types:
+      - completed
+
+permissions:
+  contents: read
+
+concurrency:
+  group: promote-dev-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  promote-dev:
+    name: Open Dev Promotion Pull Request
+
+    if: >-
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'push' &&
+      github.event.workflow_run.head_branch == 'main'
+
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    env:
+      PLATFORM_REPOSITORY: baqir-ops/secure-gitops-platform
+      IMAGE_TAG: sha-${{ github.event.workflow_run.head_sha }}
+      PROMOTION_BRANCH: automation/promote-dev-${{ github.event.workflow_run.head_sha }}
+      GH_TOKEN: ${{ secrets.GITOPS_PROMOTION_TOKEN }}
+
+    steps:
+      - name: Validate promotion inputs
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          test -n "$GH_TOKEN"
+
+          if [[ ! "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "FAIL: Invalid source commit SHA"
+            exit 1
+          fi
+
+          if [[ ! "$IMAGE_TAG" =~ ^sha-[0-9a-f]{40}$ ]]; then
+            echo "FAIL: Invalid immutable image tag"
+            exit 1
+          fi
+
+          echo "Source run: ${SOURCE_RUN_ID}"
+          echo "Source commit: ${SOURCE_SHA}"
+          echo "Promotion image: ${IMAGE_TAG}"
+
+      - name: Check out GitOps repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          repository: ${{ env.PLATFORM_REPOSITORY }}
+          ref: main
+          token: ${{ secrets.GITOPS_PROMOTION_TOKEN }}
+          path: platform
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Update development image tag
+        id: update
+        working-directory: platform
+        run: |
+          set -euo pipefail
+
+          python3 - "$IMAGE_TAG" <<'PY'
+          from pathlib import Path
+          import re
+          import sys
+
+          new_tag = sys.argv[1]
+          path = Path("environments/dev/values.yaml")
+          content = path.read_text()
+
+          pattern = re.compile(
+              r'(?m)^(\s*tag:\s*")sha-[0-9a-f]{40}("\s*)$'
+          )
+
+          updated, count = pattern.subn(
+              rf"\g<1>{new_tag}\g<2>",
+              content,
+          )
+
+          if count != 1:
+              raise SystemExit(
+                  f"Expected one dev image tag, found {count}"
+              )
+
+          path.write_text(updated)
+          print(f"Development image set to {new_tag}")
+          PY
+
+          changed_files="$(git diff --name-only)"
+
+          if [ -z "$changed_files" ]; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "Development already uses ${IMAGE_TAG}; no promotion required."
+            exit 0
+          fi
+
+          if [ "$changed_files" != "environments/dev/values.yaml" ]; then
+            echo "FAIL: Promotion modified an unexpected file"
+            printf '%s\n' "$changed_files"
+            exit 1
+          fi
+
+          grep -n 'tag:' environments/dev/values.yaml
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push promotion branch
+        if: steps.update.outputs.changed == 'true'
+        working-directory: platform
+        run: |
+          set -euo pipefail
+
+          git config user.name "secure-gitops-promotion-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          git switch -C "$PROMOTION_BRANCH"
+
+          git add environments/dev/values.yaml
+
+          staged_files="$(git diff --cached --name-only)"
+
+          if [ "$staged_files" != "environments/dev/values.yaml" ]; then
+            echo "FAIL: Unexpected staged files"
+            printf '%s\n' "$staged_files"
+            exit 1
+          fi
+
+          git diff --cached --check
+
+          git commit \
+            -m "promote task API image ${IMAGE_TAG} to dev"
+
+          git push \
+            --force-with-lease \
+            --set-upstream origin \
+            "$PROMOTION_BRANCH"
+
+      - name: Open promotion pull request
+        if: steps.update.outputs.changed == 'true'
+        id: pull-request
+        working-directory: platform
+        env:
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          SOURCE_RUN_ID: ${{ github.event.workflow_run.id }}
+        run: |
+          set -euo pipefail
+
+          existing_pr="$(
+            gh pr list \
+              --repo "$PLATFORM_REPOSITORY" \
+              --head "$PROMOTION_BRANCH" \
+              --base main \
+              --state open \
+              --json url \
+              --jq '.[0].url // empty'
+          )"
+
+          if [ -n "$existing_pr" ]; then
+            pr_url="$existing_pr"
+            echo "Using existing pull request: ${pr_url}"
+          else
+            cat > /tmp/promotion-body.md <<EOF
+          ## Automated development promotion
+
+          - Application commit: \`${SOURCE_SHA}\`
+          - Immutable image: \`${IMAGE_TAG}\`
+          - Source workflow run: \`${SOURCE_RUN_ID}\`
+          - Target environment: \`dev\`
+
+          This pull request changes only
+          \`environments/dev/values.yaml\`.
+
+          It must pass the required GitOps validation gate before merge.
+          EOF
+
+            pr_url="$(
+              gh pr create \
+                --repo "$PLATFORM_REPOSITORY" \
+                --base main \
+                --head "$PROMOTION_BRANCH" \
+                --title "promote ${IMAGE_TAG} to dev" \
+                --body-file /tmp/promotion-body.md
+            )"
+
+            rm -f /tmp/promotion-body.md
+          fi
+
+          echo "url=${pr_url}" >> "$GITHUB_OUTPUT"
+          echo "Promotion pull request: ${pr_url}"
+
+      - name: Enable validated squash auto-merge
+        if: steps.update.outputs.changed == 'true'
+        env:
+          PR_URL: ${{ steps.pull-request.outputs.url }}
+        run: |
+          set -euo pipefail
+
+          test -n "$PR_URL"
+
+          gh pr merge "$PR_URL" \
+            --repo "$PLATFORM_REPOSITORY" \
+            --auto \
+            --squash \
+            --delete-branch
+
+          echo "Auto-merge enabled after required validation succeeds."
+
+      - name: Write promotion summary
+        run: |
+          {
+            echo "## Development Promotion"
+            echo
+            echo "- Image: \`${IMAGE_TAG}\`"
+            echo "- Target: \`environments/dev/values.yaml\`"
+            echo "- Direct push to platform main: no"
+            echo "- Pull request validation required: yes"
+            echo "- Merge method: squash"
+            echo "- Changed: \`${{ steps.update.outputs.changed }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
