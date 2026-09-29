@@ -53,11 +53,13 @@ jobs:
         run: |
           set -euo pipefail
 
+          CHART_PATH=$(dirname $(find helm -name "Chart.yaml" | head -n 1))
+
           for environment in dev staging production; do
-            echo "Rendering ${environment}..."
+            echo "Rendering ${environment} using chart at ${CHART_PATH}..."
 
             helm template task-api \
-              ./helm \
+              "$CHART_PATH" \
               --namespace "$environment" \
               --values "environments/${environment}/values.yaml" \
               > "/tmp/task-api-${environment}.yaml"
