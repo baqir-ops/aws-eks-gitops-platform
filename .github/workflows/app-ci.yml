@@ -1,0 +1,52 @@
+name: Application CI
+
+on:
+  pull_request:
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ci.yml'
+  push:
+    branches:
+      - main
+    paths:
+      - 'app/**'
+      - '.github/workflows/app-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and Test Application
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Application Image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app
+          push: false
+          tags: |
+            123456789012.dkr.ecr.ap-south-1.amazonaws.com/secure-gitops-app:sha-${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Scan Application Image for Vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: "v0.72.0"
+          scan-type: fs
+          scan-ref: "app"
+          scanners: secret,vuln
+          format: table
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          hide-progress: true
