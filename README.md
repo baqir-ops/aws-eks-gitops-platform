@@ -1,44 +1,78 @@
-# Enterprise AWS EKS GitOps Platform
+# AWS EKS GitOps Platform
 
 [![GitOps Validation](https://github.com/baqir-ops/aws-eks-gitops-platform/actions/workflows/gitops-validation.yml/badge.svg)](https://github.com/baqir-ops/aws-eks-gitops-platform/actions/workflows/gitops-validation.yml)
 [![Terraform CI](https://github.com/baqir-ops/aws-eks-gitops-platform/actions/workflows/terraform-ci.yml/badge.svg)](https://github.com/baqir-ops/aws-eks-gitops-platform/actions/workflows/terraform-ci.yml)
 [![Application CI](https://github.com/baqir-ops/aws-eks-gitops-platform/actions/workflows/app-ci.yml/badge.svg)](https://github.com/baqir-ops/aws-eks-gitops-platform/actions/workflows/app-ci.yml)
 
-A production-ready, highly secure GitOps infrastructure platform designed for deploying microservices to Amazon EKS using **Terraform**, **Helm**, **Argo CD**, and **kube-prometheus-stack**.
+A GitOps platform for deploying containerized services to Amazon EKS using **Terraform**, **Helm**, **Argo CD**, and **kube-prometheus-stack**. The repository demonstrates production-style practices in a cost-conscious lab environment; see [Production Considerations](#production-considerations) before using it for live workloads.
 
 ---
 
 ## 🏗️ Architecture Overview
 
 ```mermaid
-flowchart TD
-    subgraph Developer Workflow
-        A[Developer Push] -->|Git Commit| B[GitHub Actions CI]
+flowchart LR
+    Dev["Developer / platform operator"]
+
+    subgraph GitHub["GitHub"]
+        Repo["Platform repository<br/>Terraform · Helm · environment values"]
+        GitOpsCI["GitOps validation<br/>YAML · Helm render · Trivy"]
+        TerraformCI["Terraform validation<br/>fmt · validate · Trivy"]
+        AppCI["Application CI<br/>build · scan"]
+        OIDC["GitHub OIDC"]
     end
 
-    subgraph GitHub Actions Pipelines
-        B --> C[GitOps Desired-State Validation]
-        B --> D[Terraform Infrastructure CI]
-        B --> E[App Container Build & Trivy Scan]
+    subgraph AWS["AWS account"]
+        ECR["Amazon ECR"]
+        PublishRole["GitHub Actions ECR role"]
+        EKS["Amazon EKS control plane"]
+        subgraph VPC["VPC · two Availability Zones (lab)"]
+        NodeGroup["Managed node group<br/>1–2 nodes"]
+        subgraph Cluster["Kubernetes workloads"]
+            ArgoCD["Argo CD"]
+            subgraph Workloads["Workload namespaces"]
+                Apps["Task API<br/>dev · staging · production"]
+            end
+            subgraph Monitoring["Monitoring namespace"]
+                Metrics["Prometheus · Alertmanager · Grafana"]
+            end
+        end
+        end
     end
 
-    subgraph AWS Cloud Infrastructure
-        D -->|Provision| F[AWS EKS Cluster]
-        D -->|Manage| G[Amazon ECR]
-        E -->|Push Image sha-*| G
-    end
-
-    subgraph GitOps Engine
-        F --> H[Argo CD Controller]
-        H -->|Polls Repo| I[bootstrap / platform manifests]
-        I -->|Deploys Helm Chart| J[Environment Namespaces: dev / staging / prod]
-    end
-
-    subgraph Observability Stack
-        J --> K[Prometheus & Grafana]
-        K -->|Scrape Metrics| L[ServiceMonitors & Alert Rules]
-    end
+    Dev --> Repo
+    Repo --> GitOpsCI
+    Repo --> TerraformCI
+    Repo --> AppCI
+    Dev -->|"operator-run Terraform apply"| EKS
+    Dev -->|"operator-run Terraform apply"| ECR
+    Repo -->|"desired state"| ArgoCD
+    ArgoCD -->|"sync Helm releases and environment values"| Apps
+    ArgoCD -->|"sync monitoring chart and manifests"| Metrics
+    ECR -->|"image pull (node IAM)"| Apps
+    AppCI -.->|"publish step required; current workflow uses push: false"| OIDC
+    OIDC -.->|"assume with short-lived token"| PublishRole
+    PublishRole -.-> ECR
+    Apps -->|"ServiceMonitor metrics"| Metrics
+    EKS --> NodeGroup
+    NodeGroup --> Apps
+    NodeGroup --> Metrics
 ```
+
+Terraform provisions the AWS foundation (VPC, EKS, IAM, and ECR). Argo CD reconciles Kubernetes desired state from Git; GitHub Actions validates changes but does not itself deploy them. **Image publishing is not enabled in the current Application CI workflow** (`push: false`): a release/publish step using the configured GitHub OIDC role is required to deliver new images to ECR.
+
+The VPC and node group shown are the current lab design, not a production topology: nodes use public subnets, NAT gateways are disabled, and the managed node group is configured for 1–2 instances. The production values enable Task API autoscaling from 2 to 5 replicas; the cluster's current node capacity may constrain that scaling.
+
+## 📈 Production Considerations
+
+The repository is a lab/portfolio environment, not a production-ready service deployment. To scale it safely for live traffic:
+
+- **Scale workloads and compute together.** Production values configure the Task API HPA for 2–5 replicas at 70% CPU, but the current EKS node group is limited to 1–2 nodes. Set resource requests and limits, add pod disruption budgets and topology spread across Availability Zones, and use Cluster Autoscaler or Karpenter with tested node limits so node capacity can grow with pod demand. Separate system and application workloads onto appropriate node groups where isolation or predictable capacity matters.
+- **Use private, resilient networking.** Place worker nodes in private subnets across at least two Availability Zones. Provide controlled outbound access with NAT gateways or the necessary VPC endpoints, and keep the EKS API private or tightly restricted. Add a managed ingress/load-balancing path, TLS, and appropriate edge protections before exposing services. The present public-subnet/no-NAT configuration is a cost-saving lab tradeoff.
+- **Complete the image release and promotion path.** Enable the CI publish step with the existing least-privilege GitHub OIDC role, then promote immutable image digests through dev, staging, and production only after tests and approval gates pass. Keep deployment configuration changes under protected branch review, and verify that rollback restores both the image and its configuration.
+- **Make state, secrets, and access production-grade.** Use encrypted, durable, access-controlled Terraform state with locking and recovery procedures. Keep secrets in AWS Secrets Manager or Systems Manager Parameter Store and deliver them through a supported external-secrets or pod-identity integration; do not commit Kubernetes Secret values. Apply least-privilege IAM/RBAC, audit access, and regularly rotate credentials and keys.
+- **Remove single points of failure in operations.** The current monitoring values run single replicas and use short retention with ephemeral Prometheus storage. For production, provide persistent encrypted storage or a managed metrics backend, define backup/retention and alert-routing policies, and centralize application and audit logs. Test EKS/Kubernetes upgrades, node replacement, restore procedures, and incident runbooks against explicit availability and recovery objectives.
+- **Plan capacity and cost deliberately.** Load-test representative traffic, size requests and autoscaling thresholds from observed latency and saturation, and set cluster/node scaling limits, budgets, and alerts. Validate service behavior during AZ or dependency failures; replica count alone does not provide availability if storage, networking, or downstream dependencies remain single-AZ or unprotected.
 
 ---
 
