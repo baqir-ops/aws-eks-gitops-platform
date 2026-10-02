@@ -5,13 +5,13 @@ misconfigurations:
     statement: The lab state bucket uses S3-managed encryption to avoid customer-managed KMS key cost.
   - id: AVD-AWS-0040
     paths:
-      - environments/lab/eks.tf
+      - terraform-aws-modules/eks/aws/main.tf
     statement: The lab enables the public EKS endpoint but restricts access to an explicit administrator CIDR.
   - id: AVD-AWS-0104
     paths:
-      - environments/lab/eks.tf
+      - terraform-aws-modules/eks/aws/node_groups.tf
     statement: Lab nodes use public subnets without NAT; their default egress supports node and image access.
   - id: AVD-AWS-0164
     paths:
-      - environments/lab/network.tf
+      - terraform-aws-modules/vpc/aws/main.tf
     statement: Public IP assignment is intentional for the cost-conscious lab subnets, which have no NAT gateway.
