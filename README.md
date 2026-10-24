@@ -86,6 +86,7 @@ aws-eks-gitops-platform/
 │   └── terraform-ci.yml        # Terraform linting, init, and misconfiguration scans
 ├── app/                        # Application source code & Dockerfile
 ├── bootstrap/                  # Argo CD root application (App-of-Apps pattern)
+├── disaster-recovery/          # Isolated kind + Velero backup/restore lab
 ├── environments/               # Environment-specific configuration overrides
 │   ├── dev/values.yaml         # Development settings
 │   ├── staging/values.yaml     # Staging settings
@@ -96,6 +97,16 @@ aws-eks-gitops-platform/
 ├── scripts/                    # Python validation scripts for CI checks
 └── terraform/                  # Infrastructure as Code (EKS, VPC, ECR, IAM)
 ```
+
+---
+
+## Kubernetes Disaster Recovery Lab
+
+The standalone [disaster recovery lab](disaster-recovery/README.md) uses kind,
+Velero, and a local MinIO backup target to demonstrate backing up and restoring
+a workload with persistent data. It does not provision AWS resources. The guide
+includes restore verification, a measured RTO JSON report, cleanup, and
+prerequisite/cost notes for an optional EKS adaptation.
 
 ---
 
